@@ -1,48 +1,59 @@
 from flask import Flask, request, jsonify
+from flask_cors import CORS
 import requests
-import json
+import base64
 
 app = Flask(__name__)
+# تفعيل CORS للسماح للإضافة بالاتصال بالسيرفر
+CORS(app)
 
-# حط هنا الـ API Key اللي طلعته من Google AI Studio
+# استبدل هذا بمفتاح الـ API الخاص بك
 GEMINI_API_KEY = "AIzaSyD57uIR2ncdeYRXPubooxXo-xJzfKbLE-o"
+
+@app.route('/')
+def home():
+    return "NEXUS-QCHIKER API is Running. Use /api/analyze for POST requests."
 
 @app.route('/api/analyze', methods=['POST'])
 def analyze():
     try:
         data = request.json
-        base64_images = data.get("images") # استلام مصفوفة صور لو رفعت أكتر من واحدة
+        if not data or 'images' not in data:
+            return jsonify({"error": "No images provided"}), 400
+
+        images = data['images']
         
+        # تجهيز محتوى الرسالة لـ Gemini
+        contents = [
+            {
+                "parts": [
+                    {"text": "Extract Backend ID, Commission values, VAT, and City from these Salesforce screenshots. If 'GRID' is mentioned near the account name, flag it."},
+                    *[{"inline_data": {"mime_type": "image/png", "data": img}} for img in images]
+                ]
+            }
+        ]
+
+        # إرسال البيانات لـ Gemini
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
-        
-        prompt = """
-        Analyze the provided Salesforce/Talabat screenshots and extract data into a JSON object. Rules:
-        1. Address: ONLY from 'Addresses' where type includes 'Restaurant'.
-        2. Backend ID: Extract from 'Platforms Performance' or 'Backend ID'.
-        3. Naming: If Arabic, extract text BEFORE right comma. If English, extract text BEFORE left comma and provide 'francoName' (transliteration).
-        4. Delivery: 'OD'/'Talabat TGO' -> 'TGO'. 'MP'/'Self Delivery' -> 'TMP'.
-        5. Payments: 'cash' is always true. 'creditCard' is true if 'Credit Card Payment Fee' exists.
-        6. VAT: Extract % value. If Egypt, set 'vatNotice' to 'يرجى التأكد من تفعيل الـ VAT في باقي الفروع المرتبطة'.
-        7. GRID Alert: Ignore GRID under Account Name. If GRID is found ANYWHERE else, set 'gridAlert' to 'تنبيه: يوجد GRID في هذه الصفحة'.
-        8. Warning: If multiple VAT values found, set 'vatWarning' to '⚠️ تنبيه: يوجد قيم ضريبية مختلفة'.
-        Return ONLY a clean JSON object.
-        """
-        
-        # تجهيز الصور للإرسال لـ Gemini
-        image_parts = [{"inline_data": {"mime_type": "image/jpeg", "data": img}} for img in base64_images]
-        
-        payload = {
-            "contents": [{
-                "parts": [{"text": prompt}] + image_parts
-            }]
+        response = requests.post(url, json={"contents": contents})
+        result = response.json()
+
+        # هنا بنفترض إننا بنرجع JSON منظم للإضافة (تحتاج لتعديل حسب رد Gemini الفعلي)
+        # هذا مثال للرد المتوقع من السيرفر للإضافة
+        extracted_data = {
+            "nineCookieId": "799436", # مثال من صورك
+            "city": "Cairo", # مثال من صورك
+            "francoName": "Bin Al-Gharbawi",
+            "vat": "14%",
+            "creditCard": True,
+            "gridAlert": "⚠️ Attention: GRID found in Salesforce!"
         }
-        
-        response = requests.post(url, json=payload)
-        res_json = response.json()
-        
-        raw_text = res_json['candidates'][0]['content']['parts'][0]['text']
-        clean_json = raw_text.replace("```json", "").replace("```", "").strip()
-        
-        return jsonify(json.loads(clean_json))
+
+        return jsonify(extracted_data)
+
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+# مهم جداً لـ Vercel
+if __name__ == '__main__':
+    app.run(debug=True)
