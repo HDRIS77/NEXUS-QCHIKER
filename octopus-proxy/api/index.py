@@ -1,59 +1,58 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests
-import base64
+import json
 
 app = Flask(__name__)
-# تفعيل CORS للسماح للإضافة بالاتصال بالسيرفر
-CORS(app)
+# ده السطر اللي بيسمح للكروم إكستنشن تكلم السيرفر بدون قيود
+CORS(app, resources={r"/api/*": {"origins": "*"}})
 
-# استبدل هذا بمفتاح الـ API الخاص بك
 GEMINI_API_KEY = "AIzaSyD57uIR2ncdeYRXPubooxXo-xJzfKbLE-o"
 
 @app.route('/')
 def home():
-    return "NEXUS-QCHIKER API is Running. Use /api/analyze for POST requests."
+    return "NEXUS API is Active"
 
-@app.route('/api/analyze', methods=['POST'])
+@app.route('/api/analyze', methods=['POST', 'OPTIONS'])
 def analyze():
+    # معالجة طلب الـ Preflight اللي بيبعته الكروم للتأكد من الأمان
+    if request.method == 'OPTIONS':
+        return jsonify({"status": "ok"}), 200
+
     try:
-        data = request.json
+        data = request.get_json()
         if not data or 'images' not in data:
             return jsonify({"error": "No images provided"}), 400
 
-        images = data['images']
-        
-        # تجهيز محتوى الرسالة لـ Gemini
-        contents = [
-            {
-                "parts": [
-                    {"text": "Extract Backend ID, Commission values, VAT, and City from these Salesforce screenshots. If 'GRID' is mentioned near the account name, flag it."},
-                    *[{"inline_data": {"mime_type": "image/png", "data": img}} for img in images]
-                ]
-            }
-        ]
+        image_parts = []
+        for img in data['images']:
+            image_parts.append({
+                "inline_data": {
+                    "mime_type": "image/jpeg",
+                    "data": img
+                }
+            })
 
-        # إرسال البيانات لـ Gemini
+        # الـ Prompt الاحترافي اللي اتفقنا عليه
+        prompt_text = "Analyze these Salesforce screenshots. Extract: Backend ID, City/Area (Restaurant type only), Name (Franco logic), Delivery Type (OD/TGO vs MP/TMP), Payment methods, and VAT. Alert if GRID is found outside Account Name."
+
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
-        response = requests.post(url, json={"contents": contents})
-        result = response.json()
-
-        # هنا بنفترض إننا بنرجع JSON منظم للإضافة (تحتاج لتعديل حسب رد Gemini الفعلي)
-        # هذا مثال للرد المتوقع من السيرفر للإضافة
-        extracted_data = {
-            "nineCookieId": "799436", # مثال من صورك
-            "city": "Cairo", # مثال من صورك
-            "francoName": "Bin Al-Gharbawi",
-            "vat": "14%",
-            "creditCard": True,
-            "gridAlert": "⚠️ Attention: GRID found in Salesforce!"
+        
+        payload = {
+            "contents": [{
+                "parts": [{"text": prompt_text}] + image_parts
+            }]
         }
 
-        return jsonify(extracted_data)
+        response = requests.post(url, json=payload, timeout=30)
+        res_json = response.json()
+
+        # تنظيف الرد من الـ Markdown لضمان وصول JSON صافي للإضافة
+        raw_text = res_json['candidates'][0]['content']['parts'][0]['text']
+        clean_json = raw_text.replace("```json", "").replace("```", "").strip()
+        
+        return jsonify(json.loads(clean_json))
 
     except Exception as e:
+        print(f"Error: {str(e)}")
         return jsonify({"error": str(e)}), 500
-
-# مهم جداً لـ Vercel
-if __name__ == '__main__':
-    app.run(debug=True)
